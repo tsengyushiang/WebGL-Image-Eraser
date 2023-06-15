@@ -1,2 +1,8 @@
 # WebGL-Image-Eraser
-Created with CodeSandbox
+
+## Quick start
+
+```
+yarn
+yarn start
+```

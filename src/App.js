@@ -17,7 +17,7 @@ const shaders = {
       gl_FragColor = texture2D(u_texture, v_texCoord);
     }
   `,
-  paintFragmentShader: `
+  penFragmentShader: `
     precision mediump float;
     uniform vec2 u_mouse;
     varying vec2 v_texCoord;
@@ -30,24 +30,40 @@ const shaders = {
         discard;
       }
     }
-  `
+  `,
 };
 
-const initGL = (canvas) => {
+const loadImageFromURL = (url) => {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.src = url;
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      resolve(image);
+    };
+  });
+};
+
+const initWebGL = (canvas) => {
   const gl = canvas.getContext("webgl", {
     stencil: true,
-    preserveDrawingBuffer: true
+    preserveDrawingBuffer: true,
   });
+
   gl.enable(gl.STENCIL_TEST);
   gl.disable(gl.DEPTH_TEST);
-
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
   if (!gl) {
     throw "WebGL is not supported";
   }
 
-  const compileShader = (vertexShaderSource, fragmentShaderSource) => {
+  const compileShader = (
+    vertexShaderSource,
+    fragmentShaderSource,
+    attributes = [],
+    uniforms = []
+  ) => {
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vertexShader, vertexShaderSource);
     gl.compileShader(vertexShader);
@@ -85,7 +101,11 @@ const initGL = (canvas) => {
       return;
     }
 
-    return program;
+    return {
+      program,
+      attributes: attributes.map((key) => gl.getAttribLocation(program, key)),
+      uniforms: uniforms.map((key) => gl.getUniformLocation(program, key)),
+    };
   };
 
   const positionBuffer = gl.createBuffer();
@@ -110,32 +130,17 @@ const initGL = (canvas) => {
     gl.clear(gl.COLOR_BUFFER_BIT);
   };
 
-  const loadTexture = (imageURL, u_texture) => {
-    return new Promise((resolve) => {
-      const texture = gl.createTexture();
-      const image = new Image();
-      image.src = imageURL;
-      image.crossOrigin = "anonymous";
-      image.onload = () => {
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          gl.RGBA,
-          gl.RGBA,
-          gl.UNSIGNED_BYTE,
-          image
-        );
-        gl.uniform1i(u_texture, 0);
-        resolve();
-      };
-    });
+  const bindTexture = (image, textureLocation) => {
+    const texture = gl.createTexture();
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.uniform1i(textureLocation, 0);
   };
 
   return {
@@ -144,88 +149,108 @@ const initGL = (canvas) => {
       drawRectangle,
       compileShader,
       renderStencilBuffer,
-      loadTexture
-    }
+      bindTexture,
+    },
   };
 };
 
-const WebGLPannel = ({ imageURL }) => {
+const WebGL2DPanel = ({ imageURL }) => {
   const canvasRef = useRef(null);
-  const [cleaning, setCleaning] = useState(false);
+  const [erasing, setErasing] = useState(false);
   const [keyDown, setKeyDown] = useState(false);
   const [webGL, setWebGL] = useState(null);
 
   useEffect(() => {
     try {
       const canvas = canvasRef.current;
-      const { gl, helpers } = initGL(canvas);
+      const { gl, helpers } = initWebGL(canvas);
 
-      const imageProgram = helpers.compileShader(
+      const textureShader = helpers.compileShader(
         shaders.vertexShader,
-        shaders.fragmentShader
+        shaders.fragmentShader,
+        ["a_position"],
+        ["u_texture"]
       );
 
-      const paintProgram = helpers.compileShader(
+      const penShader = helpers.compileShader(
         shaders.vertexShader,
-        shaders.paintFragmentShader
+        shaders.penFragmentShader,
+        ["a_position"],
+        ["u_mouse"]
       );
 
-      const imageQuad = gl.getAttribLocation(imageProgram, "a_position");
+      loadImageFromURL(imageURL)
+        .then((image) => {
+          helpers.bindTexture(image, textureShader.uniforms[0]);
+          canvas.width = image.width;
+          canvas.height = image.height;
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        })
+        .then(() => {
+          gl.useProgram(textureShader.program);
+          helpers.drawRectangle(textureShader.attributes[0]);
 
-      const paintQuad = gl.getAttribLocation(imageProgram, "a_position");
-
-      const u_texture = gl.getUniformLocation(imageProgram, "u_texture");
-
-      helpers.loadTexture(imageURL, u_texture).then(() => {
-        gl.useProgram(imageProgram);
-        helpers.drawRectangle(imageQuad);
-
-        setWebGL({
-          gl,
-          helpers,
-          programs: {
-            image: imageProgram,
-            paint: paintProgram
-          },
-          attributes: {
-            imageQuad,
-            paintQuad
-          }
+          setWebGL({
+            gl,
+            helpers,
+            shaders: {
+              textureShader,
+              penShader,
+            },
+          });
         });
-      });
     } catch (e) {
       console.error(e);
     }
   }, [imageURL]);
 
-  const onMouseMove = (event) => {
-    if (!webGL) return;
-
+  const getPixelCoord = (event) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
+    return [mouseX, mouseY];
+  };
 
-    const { gl, helpers, programs, attributes } = webGL;
+  const render = (mouseX, mouseY, erasing) => {
+    if (!webGL) return;
 
-    if (cleaning) {
-      console.log(keyDown);
+    const { gl, helpers, shaders } = webGL;
+
+    if (erasing) {
       helpers.renderStencilBuffer(() => {
-        gl.useProgram(programs.paint);
-        const mouseLocation = gl.getUniformLocation(programs.paint, "u_mouse");
-        gl.uniform2f(mouseLocation, mouseX, canvasRef.current.height - mouseY);
-        helpers.drawRectangle(attributes.paintQuad);
+        gl.useProgram(shaders.penShader.program);
+        gl.uniform2f(
+          shaders.penShader.uniforms[0],
+          mouseX,
+          canvasRef.current.height - mouseY
+        );
+        helpers.drawRectangle(shaders.penShader.attributes[0]);
       }, keyDown);
     }
     gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(programs.image);
-    helpers.drawRectangle(attributes.imageQuad);
+    gl.useProgram(shaders.textureShader.program);
+    helpers.drawRectangle(shaders.textureShader.attributes[0]);
 
     gl.disable(gl.STENCIL_TEST);
-    gl.useProgram(programs.paint);
-    const mouseLocation = gl.getUniformLocation(programs.paint, "u_mouse");
-    gl.uniform2f(mouseLocation, mouseX, canvasRef.current.height - mouseY);
-    helpers.drawRectangle(attributes.paintQuad);
+    gl.useProgram(shaders.penShader.program);
+    gl.uniform2f(
+      shaders.penShader.uniforms[0],
+      mouseX,
+      canvasRef.current.height - mouseY
+    );
+    helpers.drawRectangle(shaders.penShader.attributes[0]);
     gl.enable(gl.STENCIL_TEST);
+  };
+
+  const onMouseDown = (event) => {
+    setErasing(true);
+    const [mouseX, mouseY] = getPixelCoord(event);
+    render(mouseX, mouseY, true);
+  };
+
+  const onMouseMove = (event) => {
+    const [mouseX, mouseY] = getPixelCoord(event);
+    render(mouseX, mouseY, erasing);
   };
 
   return (
@@ -234,27 +259,21 @@ const WebGLPannel = ({ imageURL }) => {
         tabIndex="1"
         ref={canvasRef}
         onMouseMove={onMouseMove}
-        onMouseDown={() => setCleaning(true)}
-        onMouseUp={() => setCleaning(false)}
+        onMouseDown={onMouseDown}
+        onMouseUp={() => setErasing(false)}
         onKeyDown={() => setKeyDown(true)}
         onKeyUp={() => setKeyDown(false)}
       />
       <br />
-      <span>{`Drag mouse (state: ${cleaning}) to eraser image`}</span>
+      <span>{`Drag mouse (state: ${erasing}) to eraser image`}</span>
       <br />
-      <span>{`Press key (state: ${keyDown}) and Dragging mouse (state: ${cleaning}) to restore image`}</span>
+      <span>{`Press key (state: ${keyDown}) and Dragging mouse (state: ${erasing}) to restore image`}</span>
     </>
   );
 };
 
 const App = () => {
-  return (
-    <WebGLPannel
-      imageURL={
-        "https://www.shutterstock.com/image-photo/happy-puppy-dog-smiling-on-260nw-1799966587.jpg"
-      }
-    />
-  );
+  return <WebGL2DPanel imageURL={"/image.jpg"} />;
 };
 
 export default App;
