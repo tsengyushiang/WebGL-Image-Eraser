@@ -23,7 +23,14 @@ export const useWebGL2DPanel = (canvasRef) => {
         shaders.vertexShader,
         shaders.penFragmentShader,
         ["a_position"],
-        ["u_mouse"]
+        ["u_mouse", "u_width"]
+      );
+
+      const lineShader = helpers.compileShader(
+        shaders.vertexShader,
+        shaders.lineFragmentShader,
+        ["a_position"],
+        ["u_startPoint", "u_endPoint", "u_width"]
       );
 
       loadImageFromURL(imageURL)
@@ -43,6 +50,7 @@ export const useWebGL2DPanel = (canvasRef) => {
             shaders: {
               textureShader,
               penShader,
+              lineShader,
             },
           });
         });
@@ -51,36 +59,54 @@ export const useWebGL2DPanel = (canvasRef) => {
     }
   }, [canvasRef, imageURL]);
 
-  const render = (mouseX, mouseY, drawing, erasing) => {
+  const renderBackgroundImage = ({ gl, helpers, shaders }) => {
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(shaders.textureShader.program);
+    helpers.drawRectangle(shaders.textureShader.attributes[0]);
+  };
+
+  const renderCursor = (mouseX, mouseY, width) => {
     if (!webGL) return;
 
     const { gl, helpers, shaders } = webGL;
 
-    if (drawing) {
-      helpers.renderStencilBuffer(() => {
-        gl.useProgram(shaders.penShader.program);
-        gl.uniform2f(
-          shaders.penShader.uniforms[0],
-          mouseX,
-          canvasRef.current.height - mouseY
-        );
-        helpers.drawRectangle(shaders.penShader.attributes[0]);
-      }, erasing);
-    }
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(shaders.textureShader.program);
-    helpers.drawRectangle(shaders.textureShader.attributes[0]);
+    renderBackgroundImage({ gl, helpers, shaders });
 
     gl.disable(gl.STENCIL_TEST);
     gl.useProgram(shaders.penShader.program);
-    gl.uniform2f(
-      shaders.penShader.uniforms[0],
-      mouseX,
-      canvasRef.current.height - mouseY
-    );
+    gl.uniform2f(shaders.penShader.uniforms[0], mouseX, mouseY);
+    gl.uniform1f(shaders.penShader.uniforms[1], width);
     helpers.drawRectangle(shaders.penShader.attributes[0]);
     gl.enable(gl.STENCIL_TEST);
   };
 
-  return { render, setImageURL };
+  const updateMask = (points, width, erasing) => {
+    if (!webGL) return;
+
+    const { gl, helpers, shaders } = webGL;
+
+    helpers.renderStencilBuffer(() => {
+      for (let i = 0; i < points.length; i++) {
+        if (i + 1 >= points.length) {
+          const [mouseX, mouseY] = points[i];
+          gl.useProgram(shaders.penShader.program);
+          gl.uniform2f(shaders.penShader.uniforms[0], mouseX, mouseY);
+          gl.uniform1f(shaders.penShader.uniforms[1], width);
+          helpers.drawRectangle(shaders.penShader.attributes[0]);
+        } else {
+          const [mouseX0, mouseY0] = points[i];
+          const [mouseX1, mouseY1] = points[i + 1];
+          gl.useProgram(shaders.lineShader.program);
+          gl.uniform2f(shaders.lineShader.uniforms[0], mouseX0, mouseY0);
+          gl.uniform2f(shaders.lineShader.uniforms[1], mouseX1, mouseY1);
+          gl.uniform1f(shaders.lineShader.uniforms[2], width);
+          helpers.drawRectangle(shaders.lineShader.attributes[0]);
+        }
+      }
+    }, erasing);
+
+    renderBackgroundImage({ gl, helpers, shaders });
+  };
+
+  return { updateMask, setImageURL, renderCursor };
 };

@@ -13,7 +13,8 @@ export const getPixelCoord = (event, element) => {
   const rect = element.getBoundingClientRect();
   const mouseX = event.clientX - rect.left;
   const mouseY = event.clientY - rect.top;
-  return [mouseX, mouseY];
+
+  return [mouseX, element.height - mouseY];
 };
 
 export const initWebGL = (canvas) => {

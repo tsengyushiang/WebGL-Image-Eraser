@@ -5,23 +5,30 @@ import { useWebGL2DPanel } from "./hooks";
 
 const WebGL2DPanel = ({ imageURL }) => {
   const canvasRef = useRef(null);
-  const { render, setImageURL } = useWebGL2DPanel(canvasRef);
-  const [erasing, setErasing] = useState(false);
+  const { updateMask, setImageURL, renderCursor } = useWebGL2DPanel(canvasRef);
+  const [dragging, setDragging] = useState(false);
   const [keyDown, setKeyDown] = useState(false);
+  const [prevPoint, setPrevPoint] = useState(null);
+  const [width, setWidth] = useState(10);
 
   useEffect(() => {
     setImageURL(imageURL);
   }, [imageURL, setImageURL]);
 
   const onMouseDown = (event) => {
-    setErasing(true);
+    setDragging(true);
     const [mouseX, mouseY] = getPixelCoord(event, canvasRef.current);
-    render(mouseX, mouseY, true, keyDown);
+    updateMask([[mouseX, mouseY]], width, keyDown);
+    setPrevPoint([mouseX, mouseY]);
   };
 
   const onMouseMove = (event) => {
     const [mouseX, mouseY] = getPixelCoord(event, canvasRef.current);
-    render(mouseX, mouseY, erasing, keyDown);
+    if (dragging) {
+      if (prevPoint) updateMask([prevPoint, [mouseX, mouseY]], width, keyDown);
+      setPrevPoint([mouseX, mouseY]);
+    }
+    renderCursor(mouseX, mouseY, width);
   };
 
   return (
@@ -31,14 +38,23 @@ const WebGL2DPanel = ({ imageURL }) => {
         ref={canvasRef}
         onMouseMove={onMouseMove}
         onMouseDown={onMouseDown}
-        onMouseUp={() => setErasing(false)}
+        onMouseLeave={() => setPrevPoint(null)}
+        onMouseUp={() => setDragging(false)}
         onKeyDown={() => setKeyDown(true)}
         onKeyUp={() => setKeyDown(false)}
       />
       <br />
-      <span>{`Drag mouse (state: ${erasing}) to eraser image`}</span>
+      <span>{`Eraser width: `}</span>
+      <input
+        type="range"
+        min={10}
+        max={100}
+        onChange={(e) => setWidth(e.target.value)}
+      />
       <br />
-      <span>{`Press key (state: ${keyDown}) and Dragging mouse (state: ${erasing}) to restore image`}</span>
+      <span>{`Drag mouse (state: ${dragging}) to eraser image`}</span>
+      <br />
+      <span>{`Press key (state: ${keyDown}) and Dragging mouse (state: ${dragging}) to restore image`}</span>
     </>
   );
 };
